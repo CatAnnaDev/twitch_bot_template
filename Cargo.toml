@@ -23,10 +23,12 @@ thiserror = "2"
 time = { version = "0.3", features = ["formatting"] }
 
 iced = { version = "0.13", features = ["tokio"], optional = true }
+ratatui = { version = "0.29", optional = true }
 
 [features]
 default = []
 gui = ["dep:iced"]
+tui = ["dep:ratatui"]
 
 [profile.release]
 lto = "thin"

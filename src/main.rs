@@ -15,6 +15,9 @@ mod ws;
 #[cfg(feature = "gui")]
 mod gui;
 
+#[cfg(feature = "tui")]
+mod tui;
+
 use config::Config;
 use db::Db;
 use error::BotResult;
@@ -41,7 +44,7 @@ fn run_auth() -> BotResult<()> {
     runtime.block_on(oauth::run())
 }
 
-#[cfg(not(feature = "gui"))]
+#[cfg(all(not(feature = "gui"), not(feature = "tui")))]
 fn run() -> BotResult<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async {
@@ -53,7 +56,35 @@ fn run() -> BotResult<()> {
     })
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "tui")]
+fn run() -> BotResult<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(async {
+        let (config, db, helix) = bootstrap().await?;
+        let feed = Feed::default();
+        let (out, chat_rx) = Outbound::channel(256);
+        spawn_side_tasks(&config, &helix, out.clone(), feed.clone());
+
+        let bot_config = config.clone();
+        let bot_db = db.clone();
+        tokio::spawn(async move {
+            let bot = bot::Bot::new(bot_config, bot_db, helix, chat_rx);
+            if let Err(err) = bot.run().await {
+                tracing::error!(%err, "bot loop exited");
+            }
+        });
+
+        tui::run(tui::TuiContext {
+            config,
+            db,
+            out,
+            feed,
+        })
+        .await
+    })
+}
+
+#[cfg(all(feature = "gui", not(feature = "tui")))]
 fn run() -> BotResult<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (config, db, helix) = runtime.block_on(bootstrap())?;
@@ -165,6 +196,7 @@ fn spawn_side_tasks(config: &Config, helix: &Helix, out: Outbound, feed: Feed) {
     timers::spawn(config.clone(), out);
 }
 
+#[cfg(not(feature = "tui"))]
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
     tracing_subscriber::fmt()
@@ -173,4 +205,20 @@ fn init_tracing() {
                 .unwrap_or_else(|_| EnvFilter::new("twitch_bot=info,warn")),
         )
         .init();
+}
+
+#[cfg(feature = "tui")]
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    let Ok(file) = std::fs::File::create("twitch_bot.log") else {
+        return;
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("twitch_bot=info,warn")),
+        )
+        .with_writer(move || file.try_clone().expect("clone log file handle"))
+        .try_init();
 }
