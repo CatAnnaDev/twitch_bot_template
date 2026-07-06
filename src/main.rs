@@ -58,25 +58,27 @@ fn run() -> BotResult<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (config, db, helix) = runtime.block_on(bootstrap())?;
 
-    let _guard = runtime.enter();
     let feed = Feed::default();
     let (out, chat_rx) = Outbound::channel(256);
-    spawn_side_tasks(&config, &helix, out.clone(), feed.clone());
 
-    let bot_config = config.clone();
-    let bot_db = db.clone();
-    let bot_helix = helix.clone();
-    runtime.spawn(async move {
-        let bot = bot::Bot::new(bot_config, bot_db, bot_helix, chat_rx);
-        if let Err(err) = bot.run().await {
-            tracing::error!(%err, "bot loop exited");
-        }
-    });
+    {
+        let _guard = runtime.enter();
+        spawn_side_tasks(&config, &helix, out.clone(), feed.clone());
+
+        let bot_config = config.clone();
+        let bot_db = db.clone();
+        let bot_helix = helix.clone();
+        runtime.spawn(async move {
+            let bot = bot::Bot::new(bot_config, bot_db, bot_helix, chat_rx);
+            if let Err(err) = bot.run().await {
+                tracing::error!(%err, "bot loop exited");
+            }
+        });
+    }
 
     gui::launch(gui::GuiContext {
         config,
         db,
-        handle: runtime.handle().clone(),
         out,
         feed,
     });
